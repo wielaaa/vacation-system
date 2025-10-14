@@ -23,13 +23,13 @@ if 'vacations' not in st.session_state:
 # القائمة الجانبية
 menu = st.sidebar.selectbox(
     "القائمة الرئيسية",
-    ["الرئيسية", "إدارة الموظفين", "طلب إجازة", "التقارير"]
+    ["الرئيسية", "إدارة الموظفين", "طلب إجازة", "مراجعة الطلبات", "التقارير"]
 )
 
 if menu == "الرئيسية":
     st.header("🏠 لوحة التحكم")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric("إجمالي الموظفين", len(st.session_state.employees))
@@ -38,6 +38,10 @@ if menu == "الرئيسية":
         st.metric("طلبات الإجازة", len(st.session_state.vacations))
     
     with col3:
+        pending = len([v for v in st.session_state.vacations if v['status'] == 'معلقة'])
+        st.metric("طلبات معلقة", pending)
+    
+    with col4:
         st.metric("النظام", "🟢 نشط")
     
     st.info("مرحباً بك في نظام إدارة إجازات موظفي مطار طابا الدولي")
@@ -119,6 +123,53 @@ elif menu == "طلب إجازة":
                 else:
                     st.error("تاريخ الانتهاء يجب أن يكون بعد تاريخ البدء")
 
+elif menu == "مراجعة الطلبات":
+    st.header("📋 مراجعة طلبات الإجازة")
+    st.info("هذه الصفحة مخصصة لمدير الشؤون الإدارية لمراجعة طلبات الإجازة")
+    
+    # عرض الطلبات المعلقة فقط
+    pending_vacations = [v for v in st.session_state.vacations if v['status'] == 'معلقة']
+    
+    if not pending_vacations:
+        st.success("🎉 لا توجد طلبات إجازة معلقة للمراجعة")
+    else:
+        st.subheader(f"طلبات معلقة تحتاج المراجعة ({len(pending_vacations)})")
+        
+        for i, vacation in enumerate(pending_vacations):
+            with st.container():
+                st.markdown("---")
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    st.write(f"**👤 الموظف:** {vacation['employee']}")
+                    st.write(f"**📋 نوع الإجازة:** {vacation['type']}")
+                    st.write(f"**📅 الفترة:** من {vacation['start_date']} إلى {vacation['end_date']}")
+                    st.write(f"**📝 السبب:** {vacation['reason']}")
+                
+                with col2:
+                    if st.button("✅ موافقة", key=f"approve_{i}", use_container_width=True):
+                        # البحث عن الطلب في القائمة الرئيسية وتحديثه
+                        for j, v in enumerate(st.session_state.vacations):
+                            if (v['employee'] == vacation['employee'] and 
+                                v['start_date'] == vacation['start_date']):
+                                st.session_state.vacations[j]['status'] = 'مقبولة'
+                                break
+                        st.success("✅ تمت الموافقة على طلب الإجازة!")
+                        st.rerun()
+                
+                with col3:
+                    if st.button("❌ رفض", key=f"reject_{i}", use_container_width=True):
+                        # البحث عن الطلب في القائمة الرئيسية وتحديثه
+                        for j, v in enumerate(st.session_state.vacations):
+                            if (v['employee'] == vacation['employee'] and 
+                                v['start_date'] == vacation['start_date']):
+                                st.session_state.vacations[j]['status'] = 'مرفوضة'
+                                break
+                        st.error("❌ تم رفض طلب الإجازة!")
+                        st.rerun()
+        
+        st.markdown("---")
+
 elif menu == "التقارير":
     st.header("📊 التقارير")
     
@@ -140,7 +191,23 @@ elif menu == "التقارير":
         if st.session_state.vacations:
             st.subheader("تقرير طلبات الإجازة")
             vacations_df = pd.DataFrame(st.session_state.vacations)
-            st.dataframe(vacations_df)
+            
+            # إضافة تلوين للحالات
+            def color_status(status):
+                if status == 'مقبولة':
+                    return '🟢 مقبولة'
+                elif status == 'مرفوضة':
+                    return '🔴 مرفوضة'
+                else:
+                    return '🟡 معلقة'
+            
+            vacations_df['الحالة'] = vacations_df['status'].apply(color_status)
+            st.dataframe(vacations_df[['employee', 'type', 'start_date', 'end_date', 'الحالة']])
+            
+            # إحصائيات الحالات
+            status_counts = vacations_df['status'].value_counts()
+            st.write("**إحصائيات الحالات:**")
+            st.write(status_counts)
         else:
             st.info("لا توجد طلبات إجازة")
 
