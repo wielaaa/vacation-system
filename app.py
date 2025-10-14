@@ -1629,7 +1629,10 @@ def main():
         main_interface()
 
 if __name__ == "__main__":
+    # جرب الدخول ببيانات افتراضية أولاً
+    initialize_sample_data()
     main()
+
 
 
 
