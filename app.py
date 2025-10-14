@@ -217,6 +217,16 @@ def login_interface():
         unsafe_allow_html=True
     )
 
+def get_role_name(role_code: str) -> str:
+    """الحصول على اسم الدور"""
+    roles = {
+        'employee': 'موظف',
+        'direct_manager': 'رئيس مباشر',
+        'admin_officer': 'مسؤول إداري',
+        'admin': 'مدير النظام'
+    }
+    return roles.get(role_code, role_code)
+
 # الواجهة الرئيسية
 def main_interface():
     """الواجهة الرئيسية للنظام"""
@@ -277,16 +287,6 @@ def main_interface():
     elif selected_menu == "الإشعارات":
         show_notifications()
 
-def get_role_name(role_code: str) -> str:
-    """الحصول على اسم الدور"""
-    roles = {
-        'employee': 'موظف',
-        'direct_manager': 'رئيس مباشر',
-        'admin_officer': 'مسؤول إداري',
-        'admin': 'مدير النظام'
-    }
-    return roles.get(role_code, role_code)
-
 # لوحة التحكم
 def show_dashboard():
     """عرض لوحة التحكم"""
@@ -298,29 +298,24 @@ def show_dashboard():
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        # عدد الموظفين
         employees_count = pd.read_sql("SELECT COUNT(*) FROM employees WHERE is_active = 1", conn).iloc[0,0]
         st.metric("إجمالي الموظفين", employees_count)
     
     with col2:
-        # طلبات الإجازة
         vacations_count = pd.read_sql("SELECT COUNT(*) FROM vacation_requests", conn).iloc[0,0]
         st.metric("طلبات الإجازة", vacations_count)
     
     with col3:
-        # الطلبات المعلقة
         pending_count = pd.read_sql("SELECT COUNT(*) FROM vacation_requests WHERE status = 'pending'", conn).iloc[0,0]
         st.metric("طلبات معلقة", pending_count)
     
     with col4:
-        # حالة النظام
         st.metric("حالة النظام", "🟢 نشط")
     
     # قسم الطلبات الحديثة
     st.subheader("آخر الطلبات")
     
     if st.session_state.user['role'] == 'employee':
-        # للموظف: طلباته فقط
         recent_requests = pd.read_sql('''
             SELECT vr.*, e.name as employee_name 
             FROM vacation_requests vr 
@@ -329,7 +324,6 @@ def show_dashboard():
             ORDER BY vr.created_date DESC LIMIT 10
         ''', conn, params=(st.session_state.user['employee_id'],))
     elif st.session_state.user['role'] == 'direct_manager':
-        # للرئيس المباشر: طلبات موظفيه
         recent_requests = pd.read_sql('''
             SELECT vr.*, e.name as employee_name 
             FROM vacation_requests vr 
@@ -338,7 +332,6 @@ def show_dashboard():
             ORDER BY vr.created_date DESC LIMIT 10
         ''', conn, params=(st.session_state.user['employee_id'],))
     else:
-        # للمدير والمسؤول: جميع الطلبات
         recent_requests = pd.read_sql('''
             SELECT vr.*, e.name as employee_name 
             FROM vacation_requests vr 
@@ -347,7 +340,6 @@ def show_dashboard():
         ''', conn)
     
     if not recent_requests.empty:
-        # تلوين الحالة
         def style_status(status):
             if status == 'approved':
                 return '🟢 معتمدة'
@@ -376,7 +368,6 @@ def show_vacation_request():
         col1, col2 = st.columns(2)
         
         with col1:
-            # أنواع الإجازات
             vacation_types = [
                 "إجازة اعتيادية", "إجازة عرضة", "إجازة بدل راحة", "إجازة بدل عمل",
                 "إجازة بدون مرتب", "إجازة مرضية", "إجازة طارئة", "إجازة دراسية",
@@ -388,7 +379,6 @@ def show_vacation_request():
             end_date = st.date_input("تاريخ نهاية الإجازة *", min_value=date.today())
         
         with col2:
-            # حساب عدد الأيام
             if start_date and end_date:
                 days_count = (end_date - start_date).days + 1
                 if days_count > 0:
@@ -399,7 +389,6 @@ def show_vacation_request():
             reason = st.text_area("سبب الإجازة *", height=100, 
                                 placeholder="يرجى توضيح سبب طلب الإجازة...")
         
-        # التحقق من الرصيد المتاح
         if vacation_type in ["إجازة اعتيادية", "إجازة عرضة"]:
             balance_info = get_vacation_balance(st.session_state.user['employee_id'])
             if balance_info:
@@ -417,7 +406,6 @@ def show_vacation_request():
             else:
                 days_count = (end_date - start_date).days + 1
                 
-                # حفظ طلب الإجازة
                 try:
                     conn.execute('''
                         INSERT INTO vacation_requests 
@@ -427,8 +415,6 @@ def show_vacation_request():
                           start_date, end_date, days_count, reason))
                     
                     conn.commit()
-                    
-                    # إرسال إشعار للرئيس المباشر
                     send_notification_to_manager(st.session_state.user['employee_id'], 
                                                f"طلب إجازة جديد من {st.session_state.user['name']}")
                     
@@ -471,7 +457,6 @@ def send_notification_to_manager(employee_id: str, message: str):
     """إرسال إشعار للرئيس المباشر"""
     conn = init_database()
     
-    # الحصول على الرئيس المباشر
     manager_df = pd.read_sql('''
         SELECT direct_manager_id FROM employees WHERE employee_id = ?
     ''', conn, params=(employee_id,))
@@ -479,7 +464,6 @@ def send_notification_to_manager(employee_id: str, message: str):
     if not manager_df.empty and manager_df.iloc[0]['direct_manager_id']:
         manager_id = manager_df.iloc[0]['direct_manager_id']
         
-        # الحصول على ID المستخدم للرئيس المباشر
         user_df = pd.read_sql('''
             SELECT id FROM users WHERE employee_id = ?
         ''', conn, params=(manager_id,))
@@ -487,7 +471,6 @@ def send_notification_to_manager(employee_id: str, message: str):
         if not user_df.empty:
             user_id = user_df.iloc[0]['id']
             
-            # إضافة الإشعار
             conn.execute('''
                 INSERT INTO notifications (user_id, title, message)
                 VALUES (?, 'طلب إجازة جديد', ?)
@@ -497,24 +480,17 @@ def send_notification_to_manager(employee_id: str, message: str):
     
     conn.close()
 
-# طلباتي
-def show_my_requests():
-    """عرض طلبات الإجازة الخاصة بال
-    # استكمال الدوال بعد دالة show_my_requests()
-
 def show_my_requests():
     """عرض طلبات الإجازة الخاصة بالموظف"""
     st.header("📋 طلبات الإجازة الخاصة بي")
     
     conn = init_database()
     
-    # فلتر الحالات
     col1, col2, col3 = st.columns([2, 1, 1])
     with col2:
         status_filter = st.selectbox("تصفية حسب الحالة", 
                                    ["الكل", "قيد المراجعة", "معتمدة", "مرفوضة"])
     
-    # بناء الاستعلام حسب الفلتر
     status_map = {
         "الكل": None,
         "قيد المراجعة": "pending",
@@ -542,7 +518,6 @@ def show_my_requests():
     my_requests = pd.read_sql(query, conn, params=params)
     
     if not my_requests.empty:
-        # تلوين الحالة
         def style_status(status):
             if status == 'approved':
                 return '🟢 معتمدة'
@@ -556,7 +531,6 @@ def show_my_requests():
         my_requests['الحالة'] = my_requests['status'].apply(style_status)
         my_requests['المدير المباشر'] = my_requests['manager_name']
         
-        # عرض البيانات
         display_columns = ['vacation_type', 'start_date', 'end_date', 'days_count', 'الحالة', 'المدير المباشر']
         if 'rejection_reason' in my_requests.columns:
             my_requests['سبب الرفض'] = my_requests['rejection_reason'].fillna('')
@@ -564,7 +538,6 @@ def show_my_requests():
         
         st.dataframe(my_requests[display_columns], use_container_width=True)
         
-        # إمكانية إلغاء الطلبات المعلقة فقط
         pending_requests = my_requests[my_requests['status'] == 'pending']
         if not pending_requests.empty:
             st.subheader("إلغاء الطلبات المعلقة")
@@ -600,7 +573,6 @@ def show_vacation_balance():
     
     current_year = date.today().year
     
-    # عرض الأرصدة في بطاقات
     st.subheader(f"رصيد السنة الحالية ({current_year})")
     
     if current_year in balance_info:
@@ -618,7 +590,6 @@ def show_vacation_balance():
         with col4:
             st.metric("إجازات أخرى", f"{balance_info[current_year]['other_balance']} يوم")
     
-    # عرض أرصدة السنوات السابقة
     previous_years = {k: v for k, v in balance_info.items() if k < current_year}
     if previous_years:
         st.subheader("أرصدة السنوات السابقة")
@@ -649,9 +620,7 @@ def show_review_requests():
     
     conn = init_database()
     
-    # الحصول على الطلبات التي تحتاج المراجعة
     if st.session_state.user['role'] == 'direct_manager':
-        # للرئيس المباشر: طلبات موظفيه فقط
         requests_df = pd.read_sql('''
             SELECT vr.*, e.name as employee_name, e.department,
                    e.position, vb.regular_balance, vb.sick_balance
@@ -662,7 +631,6 @@ def show_review_requests():
             ORDER BY vr.created_date DESC
         ''', conn, params=(date.today().year, st.session_state.user['employee_id']))
     else:
-        # للمدير: جميع الطلبات المعلقة
         requests_df = pd.read_sql('''
             SELECT vr.*, e.name as employee_name, e.department,
                    e.position, dm.name as manager_name,
@@ -680,7 +648,6 @@ def show_review_requests():
         conn.close()
         return
     
-    # عرض كل طلب في بطاقة منفصلة
     for _, request in requests_df.iterrows():
         with st.container():
             st.markdown("---")
@@ -695,7 +662,6 @@ def show_review_requests():
                 st.write(f"**⏰ المدة:** {request['days_count']} يوم")
                 st.write(f"**📝 السبب:** {request['reason']}")
                 
-                # عرض الرصيد المتاح
                 if pd.notna(request['regular_balance']):
                     st.write(f"**💰 الرصيد المتاح:** {request['regular_balance']} يوم")
             
@@ -706,19 +672,16 @@ def show_review_requests():
                 
                 with col_approve:
                     if st.button("✅ موافقة", key=f"approve_{request['id']}", use_container_width=True):
-                        # الموافقة على الطلب
                         conn.execute('''
                             UPDATE vacation_requests 
                             SET status = 'approved', direct_manager_approval = ?
                             WHERE id = ?
                         ''', (st.session_state.user['employee_id'], request['id']))
                         
-                        # خصم من الرصيد
                         deduct_vacation_balance(request['employee_id'], request['vacation_type'], request['days_count'])
                         
                         conn.commit()
                         
-                        # إرسال إشعار للموظف
                         send_notification_to_employee(
                             request['employee_id'],
                             f"تمت الموافقة على طلب إجازتك من {request['start_date']} إلى {request['end_date']}"
@@ -741,7 +704,6 @@ def show_review_requests():
                                 
                                 conn.commit()
                                 
-                                # إرسال إشعار للموظف
                                 send_notification_to_employee(
                                     request['employee_id'],
                                     f"تم رفض طلب إجازتك. السبب: {rejection_reason}"
@@ -761,8 +723,7 @@ def deduct_vacation_balance(employee_id: str, vacation_type: str, days: int):
     current_year = date.today().year
     
     try:
-        # تحديد نوع الرصيد المطلوب خصمه
-        balance_column = 'regular_balance'  # افتراضي
+        balance_column = 'regular_balance'
         
         if 'مرضية' in vacation_type:
             balance_column = 'sick_balance'
@@ -771,7 +732,6 @@ def deduct_vacation_balance(employee_id: str, vacation_type: str, days: int):
         elif 'عرضة' in vacation_type:
             balance_column = 'other_balance'
         
-        # الخصم من رصيد السنة الحالية أولاً
         conn.execute(f'''
             UPDATE vacation_balances 
             SET {balance_column} = {balance_column} - ?
@@ -789,7 +749,6 @@ def send_notification_to_employee(employee_id: str, message: str):
     """إرسال إشعار للموظف"""
     conn = init_database()
     
-    # الحصول على ID المستخدم للموظف
     user_df = pd.read_sql('''
         SELECT id FROM users WHERE employee_id = ?
     ''', conn, params=(employee_id,))
@@ -797,7 +756,6 @@ def send_notification_to_employee(employee_id: str, message: str):
     if not user_df.empty:
         user_id = user_df.iloc[0]['id']
         
-        # إضافة الإشعار
         conn.execute('''
             INSERT INTO notifications (user_id, title, message)
             VALUES (?, 'تحديث حالة طلب الإجازة', ?)
@@ -826,7 +784,6 @@ def show_balance_management():
             col1, col2 = st.columns(2)
             
             with col1:
-                # اختيار الموظف
                 employees_df = pd.read_sql('''
                     SELECT employee_id, name, department 
                     FROM employees 
@@ -849,7 +806,6 @@ def show_balance_management():
                 other_balance = st.number_input("رصيد الإجازات الأخرى", min_value=0, value=0)
             
             if st.form_submit_button("إضافة الرصيد", use_container_width=True):
-                # التحقق من عدم وجود رصيد لنفس السنة
                 existing_balance = pd.read_sql('''
                     SELECT id FROM vacation_balances 
                     WHERE employee_id = ? AND year = ?
@@ -858,7 +814,6 @@ def show_balance_management():
                 if not existing_balance.empty:
                     st.error("⚠️ يوجد رصيد مسجل already لهذا الموظف لنفس السنة")
                 else:
-                    # إدخال الرصيد بحالة pending
                     conn.execute('''
                         INSERT INTO vacation_balances 
                         (employee_id, year, regular_balance, sick_balance, emergency_balance, other_balance, created_by)
@@ -867,7 +822,6 @@ def show_balance_management():
                     
                     conn.commit()
                     
-                    # إرسال إشعار للمدير للموافقة
                     send_notification_to_admin(
                         f"طلب اعتماد رصيد إجازات جديد للموظف {employees_df[employees_df['employee_id']==employee_id]['name'].iloc[0]} للسنة {year}"
                     )
@@ -877,7 +831,6 @@ def show_balance_management():
     with tab2:
         st.subheader("تعديل الأرصدة الحالية")
         
-        # عرض الأرصدة الحالية
         balances_df = pd.read_sql('''
             SELECT vb.*, e.name as employee_name, e.department,
                    u1.name as created_by_name, u2.name as approved_by_name
@@ -937,7 +890,6 @@ def show_balance_management():
                                 
                                 conn.commit()
                                 
-                                # إرسال إشعار للموظف
                                 send_notification_to_employee(
                                     balance['employee_id'],
                                     f"تم اعتماد رصيد إجازاتك للسنة {balance['year']}"
@@ -967,14 +919,18 @@ def send_notification_to_admin(message: str):
     """إرسال إشعار لمدير النظام"""
     conn = init_database()
     
-    # الحصول على جميع المديرين
     admins_df = pd.read_sql('''
         SELECT id FROM users WHERE role = 'admin' AND is_active = 1
     ''', conn)
     
     for _, admin in admins_df.iterrows():
-
-        # استكمال الدوال بعد دالة send_notification_to_admin()
+        conn.execute('''
+            INSERT INTO notifications (user_id, title, message)
+            VALUES (?, 'طلب اعتماد رصيد', ?)
+        ''', (admin['id'], message))
+    
+    conn.commit()
+    conn.close()
 
 def show_user_management():
     """إدارة المستخدمين (للمدير فقط)"""
@@ -1011,7 +967,6 @@ def show_user_management():
             with col2:
                 position = st.text_input("المسمى الوظيفي *", placeholder="مثال: مدير قسم")
                 
-                # اختيار الرئيس المباشر
                 managers_df = pd.read_sql('''
                     SELECT employee_id, name, department 
                     FROM employees 
@@ -1033,7 +988,6 @@ def show_user_management():
                     st.error("الرجاء ملء جميع الحقول الإلزامية (*)")
                 else:
                     try:
-                        # إضافة الموظف
                         conn.execute('''
                             INSERT INTO employees 
                             (employee_id, name, department, position, direct_manager_id, hire_date)
@@ -1050,7 +1004,6 @@ def show_user_management():
     with tab2:
         st.subheader("قائمة الموظفين")
         
-        # فلتر الموظفين
         col1, col2 = st.columns(2)
         with col1:
             department_filter = st.selectbox(
@@ -1065,7 +1018,6 @@ def show_user_management():
         with col2:
             status_filter = st.selectbox("حالة الموظف", ["نشط", "جميع"])
         
-        # بناء الاستعلام
         query = '''
             SELECT e.*, m.name as manager_name,
                    (SELECT COUNT(*) FROM vacation_requests vr WHERE vr.employee_id = e.employee_id) as request_count
@@ -1088,7 +1040,6 @@ def show_user_management():
         employees_df = pd.read_sql(query, conn, params=params)
         
         if not employees_df.empty:
-            # تنسيق البيانات للعرض
             employees_display = employees_df.copy()
             employees_display['الحالة'] = employees_display['is_active'].apply(lambda x: '🟢 نشط' if x == 1 else '🔴 غير نشط')
             employees_display['الرئيس المباشر'] = employees_display['manager_name'].fillna('لا يوجد')
@@ -1109,7 +1060,6 @@ def show_user_management():
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # عرض المستخدمين الحاليين
             users_df = pd.read_sql('''
                 SELECT u.*, e.name as employee_name, e.department,
                        e.position, e.is_active as employee_active
@@ -1135,7 +1085,6 @@ def show_user_management():
             st.subheader("إنشاء حساب جديد")
             
             with st.form("create_user_form"):
-                # اختيار الموظف
                 employees_without_account = pd.read_sql('''
                     SELECT employee_id, name, department 
                     FROM employees 
@@ -1165,7 +1114,6 @@ def show_user_management():
                         if not all([employee_id, username, password, role]):
                             st.error("الرجاء ملء جميع الحقول")
                         else:
-                            # تشفير كلمة المرور
                             hashed_password, salt = hash_password(password)
                             
                             try:
@@ -1183,7 +1131,6 @@ def show_user_management():
     with tab4:
         st.subheader("الهيكل التنظيمي")
         
-        # عرض الهيكل التنظيمي
         org_df = pd.read_sql('''
             SELECT e.employee_id, e.name, e.department, e.position,
                    e.direct_manager_id, m.name as manager_name
@@ -1194,7 +1141,6 @@ def show_user_management():
         ''', conn)
         
         if not org_df.empty:
-            # عرض حسب الأقسام
             departments = org_df['department'].unique()
             
             for dept in departments:
@@ -1212,7 +1158,6 @@ def show_user_management():
                                 st.write(f"↳ المدير: {emp['manager_name']}")
                         
                         with col3:
-                            # عدد الطلبات
                             requests_count = pd.read_sql('''
                                 SELECT COUNT(*) FROM vacation_requests 
                                 WHERE employee_id = ?
@@ -1275,7 +1220,6 @@ def show_reports():
             ).iloc[0,0]
             st.metric("الطلبات المعلقة", pending_requests)
         
-        # رسم بياني لطلبات الإجازة حسب الشهر
         st.subheader("طلبات الإجازة خلال السنة")
         
         monthly_requests = pd.read_sql('''
@@ -1317,7 +1261,6 @@ def show_reports():
             ])
         
         if st.button("إنشاء التقرير", use_container_width=True):
-            # بناء الاستعلام
             query = '''
                 SELECT vr.*, e.name as employee_name, e.department,
                        e.position, dm.name as manager_name
@@ -1347,7 +1290,6 @@ def show_reports():
             report_df = pd.read_sql(query, conn, params=params)
             
             if not report_df.empty:
-                # تنسيق البيانات
                 report_display = report_df.copy()
                 report_display['الحالة'] = report_display['status'].apply(
                     lambda x: '🟢 معتمدة' if x == 'approved' else 
@@ -1363,7 +1305,6 @@ def show_reports():
                     use_container_width=True
                 )
                 
-                # إمكانية التصدير
                 csv = report_display.to_csv(index=False, encoding='utf-8-sig')
                 st.download_button(
                     "📥 تصدير التقرير كـ CSV",
@@ -1378,7 +1319,6 @@ def show_reports():
     with tab3:
         st.subheader("إحصائيات الأقسام")
         
-        # إحصائيات حسب الأقسام
         dept_stats = pd.read_sql('''
             SELECT e.department,
                    COUNT(DISTINCT e.employee_id) as employee_count,
@@ -1396,7 +1336,6 @@ def show_reports():
         if not dept_stats.empty:
             st.dataframe(dept_stats, use_container_width=True)
             
-            # رسم بياني للأقسام
             col1, col2 = st.columns(2)
             
             with col1:
@@ -1469,7 +1408,6 @@ def show_audit_logs():
     
     conn = init_database()
     
-    # فلتر السجلات
     col1, col2 = st.columns(2)
     
     with col1:
@@ -1482,7 +1420,6 @@ def show_audit_logs():
             "الكل", "تسجيل دخول", "طلب إجازة", "موافقة", "رفض", "إنشاء حساب"
         ])
     
-    # بناء الاستعلام
     query = '''
         SELECT al.*, u.username, e.name as user_name
         FROM audit_logs al
@@ -1493,7 +1430,6 @@ def show_audit_logs():
     
     params = []
     
-    # تطبيق فلتر الفترة
     if days_filter != "الكل":
         if days_filter == "آخر 7 أيام":
             date_filter = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
@@ -1501,13 +1437,12 @@ def show_audit_logs():
             date_filter = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         elif days_filter == "آخر 90 يوم":
             date_filter = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
-        else:  # السنة الحالية
+        else:
             date_filter = date.today().replace(month=1, day=1).strftime('%Y-%m-%d')
         
         query += " AND al.created_date >= ?"
         params.append(date_filter)
     
-    # تطبيق فلتر الإجراء
     if action_filter != "الكل":
         action_map = {
             "تسجيل دخول": "login",
@@ -1529,7 +1464,6 @@ def show_audit_logs():
             use_container_width=True
         )
         
-        # إحصائيات السجلات
         st.subheader("إحصائيات السجلات")
         
         col1, col2, col3 = st.columns(3)
@@ -1557,7 +1491,6 @@ def show_notifications():
     
     conn = init_database()
     
-    # الحصول على إشعارات المستخدم
     notifications_df = pd.read_sql('''
         SELECT id, title, message, is_read, created_date
         FROM notifications 
@@ -1568,19 +1501,16 @@ def show_notifications():
     if notifications_df.empty:
         st.info("🎉 لا توجد إشعارات جديدة")
     else:
-        # عد الإشعارات غير المقروءة
         unread_count = len(notifications_df[notifications_df['is_read'] == 0])
         
         if unread_count > 0:
             st.success(f"لديك {unread_count} إشعار غير مقروء")
         
-        # عرض الإشعارات
         for _, notification in notifications_df.iterrows():
             with st.container():
                 col1, col2 = st.columns([4, 1])
                 
                 with col1:
-                    # تلوين الإشعارات غير المقروءة
                     if notification['is_read'] == 0:
                         st.markdown(f"### 🔵 {notification['title']}")
                     else:
@@ -1592,7 +1522,6 @@ def show_notifications():
                 with col2:
                     if notification['is_read'] == 0:
                         if st.button("تم القراءة", key=f"read_{notification['id']}", use_container_width=True):
-                            # تحديث حالة الإشعار كمقروء
                             conn.execute('''
                                 UPDATE notifications 
                                 SET is_read = 1 
@@ -1601,7 +1530,6 @@ def show_notifications():
                             conn.commit()
                             st.rerun()
         
-        # زر标记 الكل كمقروء
         if unread_count > 0:
             if st.button("标记 الكل كمقروء", use_container_width=True):
                 conn.execute('''
@@ -1619,7 +1547,6 @@ def initialize_sample_data():
     """تهيئة بيانات نموذجية للنظام"""
     conn = init_database()
     
-    # التحقق من وجود بيانات بالفعل
     employees_count = pd.read_sql("SELECT COUNT(*) FROM employees", conn).iloc[0,0]
     
     if employees_count > 0:
@@ -1629,17 +1556,11 @@ def initialize_sample_data():
     st.info("🔧 جاري تهيئة البيانات النموذجية للنظام...")
     
     try:
-        # إضافة موظفين نموذجيين
         sample_employees = [
-            # الإدارة
             ('ADM001', 'أحمد محمد علي', 'الإدارة العامة', 'مدير عام', None, '2020-01-01'),
             ('ADM002', 'فاطمة خالد حسن', 'الشؤون الإدارية', 'مدير شؤون الموظفين', 'ADM001', '2020-02-01'),
-            
-            # الرؤساء المباشرين
             ('MGR001', 'خالد عبدالله سالم', 'التشغيل', 'مدير التشغيل', 'ADM001', '2020-03-01'),
             ('MGR002', 'سارة عبدالرحمن', 'خدمات الركاب', 'مدير الخدمات', 'ADM001', '2020-03-15'),
-            
-            # موظفين
             ('EMP001', 'محمد إبراهيم كامل', 'التشغيل', 'مهندس تشغيل', 'MGR001', '2021-01-15'),
             ('EMP002', 'لينا مصطفى أحمد', 'خدمات الركاب', 'مساعد ركاب', 'MGR002', '2021-02-01'),
             ('EMP003', 'يوسف حمزة علي', 'الأمن والسلامة', 'ضابط أمن', 'MGR001', '2021-03-01'),
@@ -1653,16 +1574,11 @@ def initialize_sample_data():
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', emp)
         
-        # إضافة مستخدمين نموذجيين
         sample_users = [
-            # مدير النظام
             ('admin', 'ADM001', 'admin', 'admin123'),
-            # مسؤول إداري
             ('admin2', 'ADM002', 'admin_officer', 'admin123'),
-            # رؤساء مباشرين
             ('mgr1', 'MGR001', 'direct_manager', 'mgr123'),
             ('mgr2', 'MGR002', 'direct_manager', 'mgr123'),
-            # موظفين
             ('emp1', 'EMP001', 'employee', 'emp123'),
             ('emp2', 'EMP002', 'employee', 'emp123'),
             ('emp3', 'EMP003', 'employee', 'emp123'),
@@ -1677,7 +1593,6 @@ def initialize_sample_data():
                 VALUES (?, ?, ?, ?, ?)
             ''', (username, hashed_password, salt, emp_id, role))
         
-        # إضافة أرصدة إجازات نموذجية
         current_year = date.today().year
         sample_balances = [
             ('EMP001', current_year, 21, 30, 7, 0, 'approved', 'ADM002'),
@@ -1703,7 +1618,6 @@ def initialize_sample_data():
 
 def main():
     """الدالة الرئيسية لتشغيل النظام"""
-    # تهيئة البيانات النموذجية (لأول تشغيل فقط)
     initialize_sample_data()
     
     if 'authenticated' not in st.session_state:
