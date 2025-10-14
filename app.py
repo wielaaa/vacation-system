@@ -6,6 +6,158 @@ import secrets
 from datetime import datetime, date, timedelta
 import json
 from typing import Dict, List, Optional
+import streamlit as st
+import pandas as pd
+import sqlite3
+import hashlib
+import secrets
+from datetime import datetime, date, timedelta
+import json
+from typing import Dict, List, Optional
+import os
+
+# 🔧 إصلاح قاعدة البيانات - إضافة هذه الدالة
+def fix_database():
+    """إصلاح مشكلة قاعدة البيانات مرة واحدة"""
+    try:
+        conn = sqlite3.connect('vacation_system.db', check_same_thread=False)
+        c = conn.cursor()
+        
+        # إنشاء الجداول إذا لم تكن موجودة
+        c.executescript('''
+            CREATE TABLE IF NOT EXISTS employees (
+                employee_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                department TEXT NOT NULL,
+                position TEXT NOT NULL,
+                direct_manager_id TEXT,
+                hire_date DATE,
+                is_active BOOLEAN DEFAULT 1,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                employee_id TEXT UNIQUE,
+                role TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT 1,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (employee_id) REFERENCES employees (employee_id)
+            );
+            
+            CREATE TABLE IF NOT EXISTS vacation_balances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                regular_balance INTEGER DEFAULT 0,
+                sick_balance INTEGER DEFAULT 0,
+                emergency_balance INTEGER DEFAULT 0,
+                other_balance INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                created_by TEXT,
+                approved_by TEXT,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (employee_id) REFERENCES employees (employee_id)
+            );
+            
+            CREATE TABLE IF NOT EXISTS vacation_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id TEXT NOT NULL,
+                vacation_type TEXT NOT NULL,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                days_count INTEGER NOT NULL,
+                reason TEXT,
+                status TEXT DEFAULT 'pending',
+                direct_manager_approval TEXT,
+                admin_approval TEXT,
+                rejection_reason TEXT,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (employee_id) REFERENCES employees (employee_id)
+            );
+            
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                is_read BOOLEAN DEFAULT 0,
+                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
+        ''')
+        
+        # التحقق من وجود بيانات
+        c.execute("SELECT COUNT(*) FROM users")
+        user_count = c.fetchone()[0]
+        
+        if user_count == 0:
+            # إضافة بيانات نموذجية
+            employees = [
+                ('ADM001', 'أحمد محمد علي', 'الإدارة العامة', 'مدير عام', None, '2020-01-01'),
+                ('ADM002', 'فاطمة خالد حسن', 'الشؤون الإدارية', 'مدير شؤون الموظفين', 'ADM001', '2020-02-01'),
+                ('MGR001', 'خالد عبدالله سالم', 'التشغيل', 'مدير التشغيل', 'ADM001', '2020-03-01'),
+                ('MGR002', 'سارة عبدالرحمن', 'خدمات الركاب', 'مدير الخدمات', 'ADM001', '2020-03-15'),
+                ('EMP001', 'محمد إبراهيم كامل', 'التشغيل', 'مهندس تشغيل', 'MGR001', '2021-01-15'),
+                ('EMP002', 'لينا مصطفى أحمد', 'خدمات الركاب', 'مساعد ركاب', 'MGR002', '2021-02-01'),
+            ]
+            
+            c.executemany('''
+                INSERT OR IGNORE INTO employees 
+                (employee_id, name, department, position, direct_manager_id, hire_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', employees)
+            
+            # إضافة مستخدمين
+            users_data = []
+            for username, emp_id, role, password in [
+                ('admin', 'ADM001', 'admin', 'admin123'),
+                ('admin2', 'ADM002', 'admin_officer', 'admin123'),
+                ('mgr1', 'MGR001', 'direct_manager', 'mgr123'),
+                ('mgr2', 'MGR002', 'direct_manager', 'mgr123'),
+                ('emp1', 'EMP001', 'employee', 'emp123'),
+                ('emp2', 'EMP002', 'employee', 'emp123'),
+            ]:
+                hashed_password, salt = hash_password(password)
+                users_data.append((username, hashed_password, salt, emp_id, role))
+            
+            c.executemany('''
+                INSERT OR IGNORE INTO users 
+                (username, password_hash, salt, employee_id, role)
+                VALUES (?, ?, ?, ?, ?)
+            ''', users_data)
+            
+            # إضافة أرصدة
+            current_year = date.today().year
+            balances = [
+                ('EMP001', current_year, 21, 30, 7, 0, 'approved', 'ADM002'),
+                ('EMP002', current_year, 21, 30, 7, 0, 'approved', 'ADM002'),
+            ]
+            
+            c.executemany('''
+                INSERT OR IGNORE INTO vacation_balances 
+                (employee_id, year, regular_balance, sick_balance, emergency_balance, other_balance, status, approved_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', balances)
+        
+        conn.commit()
+        conn.close()
+        print("✅ تم إصلاح قاعدة البيانات بنجاح")
+        
+    except Exception as e:
+        print(f"❌ خطأ في إصلاح قاعدة البيانات: {e}")
+
+# استبدال دالة init_database القديمة بهذه
+def init_database():
+    """تهيئة قاعدة البيانات مع معالجة الأخطاء"""
+    try:
+        return sqlite3.connect('vacation_system.db', check_same_thread=False)
+    except Exception as e:
+        st.error(f"خطأ في الاتصال بقاعدة البيانات: {e}")
+        return None
 
 # إعداد الصفحة
 st.set_page_config(
@@ -1632,6 +1784,7 @@ if __name__ == "__main__":
     # جرب الدخول ببيانات افتراضية أولاً
     initialize_sample_data()
     main()
+
 
 
 
