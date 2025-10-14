@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 import sqlite3
+import os
 
 # إعداد الصفحة
 st.set_page_config(
@@ -10,15 +11,48 @@ st.set_page_config(
     layout="wide"
 )
 
+# إنشاء قاعدة البيانات
+def init_db():
+    conn = sqlite3.connect('vacation_system.db')
+    c = conn.cursor()
+    
+    # جدول الموظفين
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS employees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id TEXT UNIQUE,
+            name TEXT NOT NULL,
+            department TEXT,
+            position TEXT,
+            created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # جدول طلبات الإجازة
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS vacations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id TEXT,
+            employee_name TEXT,
+            vacation_type TEXT,
+            start_date DATE,
+            end_date DATE,
+            reason TEXT,
+            status TEXT DEFAULT 'معلقة',
+            created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (employee_id) REFERENCES employees (employee_id)
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+# استدعاء إنشاء قاعدة البيانات
+init_db()
+
 # العنوان الرئيسي
 st.title("✈️ نظام إدارة الإجازات - مطار طابا الدولي")
 st.markdown("---")
-
-# إنشاء قاعدة البيانات في الذاكرة
-if 'employees' not in st.session_state:
-    st.session_state.employees = []
-if 'vacations' not in st.session_state:
-    st.session_state.vacations = []
 
 # القائمة الجانبية
 menu = st.sidebar.selectbox(
@@ -29,17 +63,25 @@ menu = st.sidebar.selectbox(
 if menu == "الرئيسية":
     st.header("🏠 لوحة التحكم")
     
+    conn = sqlite3.connect('vacation_system.db')
+    
+    # إحصائيات
+    employees_count = conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0]
+    vacations_count = conn.execute("SELECT COUNT(*) FROM vacations").fetchone()[0]
+    pending_count = conn.execute("SELECT COUNT(*) FROM vacations WHERE status = 'معلقة'").fetchone()[0]
+    
+    conn.close()
+    
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("إجمالي الموظفين", len(st.session_state.employees))
+        st.metric("إجمالي الموظفين", employees_count)
     
     with col2:
-        st.metric("طلبات الإجازة", len(st.session_state.vacations))
+        st.metric("طلبات الإجازة", vacations_count)
     
     with col3:
-        pending = len([v for v in st.session_state.vacations if v['status'] == 'معلقة'])
-        st.metric("طلبات معلقة", pending)
+        st.metric("طلبات معلقة", pending_count)
     
     with col4:
         st.metric("النظام", "🟢 نشط")
@@ -48,6 +90,8 @@ if menu == "الرئيسية":
 
 elif menu == "إدارة الموظفين":
     st.header("👥 إدارة الموظفين")
+    
+    conn = sqlite3.connect('vacation_system.db')
     
     with st.form("add_employee"):
         st.subheader("إضافة موظف جديد")
@@ -67,37 +111,47 @@ elif menu == "إدارة الموظفين":
         
         if st.form_submit_button("إضافة الموظف"):
             if emp_id and name:
-                st.session_state.employees.append({
-                    'id': emp_id,
-                    'name': name,
-                    'department': department,
-                    'position': position
-                })
-                st.success(f"تم إضافة الموظف {name} بنجاح!")
+                try:
+                    conn.execute(
+                        "INSERT INTO employees (employee_id, name, department, position) VALUES (?, ?, ?, ?)",
+                        (emp_id, name, department, position)
+                    )
+                    conn.commit()
+                    st.success(f"تم إضافة الموظف {name} بنجاح!")
+                except sqlite3.IntegrityError:
+                    st.error("رقم الموظف موجود مسبقاً!")
             else:
                 st.error("الرجاء ملء جميع الحقول المطلوبة")
     
     # عرض الموظفين
-    if st.session_state.employees:
-        st.subheader("قائمة الموظفين")
-        employees_df = pd.DataFrame(st.session_state.employees)
-        st.dataframe(employees_df)
+    st.subheader("قائمة الموظفين")
+    employees_df = pd.read_sql("SELECT * FROM employees ORDER BY name", conn)
+    
+    if not employees_df.empty:
+        st.dataframe(employees_df[['employee_id', 'name', 'department', 'position']])
     else:
         st.info("لا يوجد موظفين مسجلين حتى الآن")
+    
+    conn.close()
 
 elif menu == "طلب إجازة":
     st.header("📝 طلب إجازة")
     
-    if not st.session_state.employees:
+    conn = sqlite3.connect('vacation_system.db')
+    
+    employees_df = pd.read_sql("SELECT * FROM employees", conn)
+    
+    if employees_df.empty:
         st.warning("الرجاء إضافة موظفين أولاً من صفحة إدارة الموظفين")
     else:
         with st.form("vacation_request"):
             col1, col2 = st.columns(2)
             
             with col1:
-                employee = st.selectbox(
+                employee_id = st.selectbox(
                     "اختر الموظف",
-                    options=[emp['name'] for emp in st.session_state.employees]
+                    options=employees_df['employee_id'].tolist(),
+                    format_func=lambda x: f"{employees_df[employees_df['employee_id']==x]['name'].iloc[0]} ({x})"
                 )
                 vacation_type = st.selectbox(
                     "نوع الإجازة",
@@ -111,75 +165,84 @@ elif menu == "طلب إجازة":
             
             if st.form_submit_button("تقديم طلب الإجازة"):
                 if start_date <= end_date:
-                    st.session_state.vacations.append({
-                        'employee': employee,
-                        'type': vacation_type,
-                        'start_date': start_date,
-                        'end_date': end_date,
-                        'reason': reason,
-                        'status': 'معلقة'
-                    })
+                    employee_name = employees_df[employees_df['employee_id']==employee_id]['name'].iloc[0]
+                    
+                    conn.execute(
+                        "INSERT INTO vacations (employee_id, employee_name, vacation_type, start_date, end_date, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                        (employee_id, employee_name, vacation_type, start_date, end_date, reason)
+                    )
+                    conn.commit()
                     st.success("تم تقديم طلب الإجازة بنجاح!")
                 else:
                     st.error("تاريخ الانتهاء يجب أن يكون بعد تاريخ البدء")
+    
+    conn.close()
 
 elif menu == "مراجعة الطلبات":
     st.header("📋 مراجعة طلبات الإجازة")
     st.info("هذه الصفحة مخصصة لمدير الشؤون الإدارية لمراجعة طلبات الإجازة")
     
-    # عرض الطلبات المعلقة فقط
-    pending_vacations = [v for v in st.session_state.vacations if v['status'] == 'معلقة']
+    conn = sqlite3.connect('vacation_system.db')
     
-    if not pending_vacations:
+    # عرض الطلبات المعلقة فقط
+    pending_vacations = pd.read_sql(
+        "SELECT * FROM vacations WHERE status = 'معلقة' ORDER BY created_date",
+        conn
+    )
+    
+    if pending_vacations.empty:
         st.success("🎉 لا توجد طلبات إجازة معلقة للمراجعة")
     else:
         st.subheader(f"طلبات معلقة تحتاج المراجعة ({len(pending_vacations)})")
         
-        for i, vacation in enumerate(pending_vacations):
+        for _, vacation in pending_vacations.iterrows():
             with st.container():
                 st.markdown("---")
                 col1, col2, col3 = st.columns([3, 1, 1])
                 
                 with col1:
-                    st.write(f"**👤 الموظف:** {vacation['employee']}")
-                    st.write(f"**📋 نوع الإجازة:** {vacation['type']}")
+                    st.write(f"**👤 الموظف:** {vacation['employee_name']} ({vacation['employee_id']})")
+                    st.write(f"**📋 نوع الإجازة:** {vacation['vacation_type']}")
                     st.write(f"**📅 الفترة:** من {vacation['start_date']} إلى {vacation['end_date']}")
                     st.write(f"**📝 السبب:** {vacation['reason']}")
                 
                 with col2:
-                    if st.button("✅ موافقة", key=f"approve_{i}", use_container_width=True):
-                        # البحث عن الطلب في القائمة الرئيسية وتحديثه
-                        for j, v in enumerate(st.session_state.vacations):
-                            if (v['employee'] == vacation['employee'] and 
-                                v['start_date'] == vacation['start_date']):
-                                st.session_state.vacations[j]['status'] = 'مقبولة'
-                                break
+                    if st.button("✅ موافقة", key=f"approve_{vacation['id']}", use_container_width=True):
+                        conn.execute(
+                            "UPDATE vacations SET status = 'مقبولة' WHERE id = ?",
+                            (vacation['id'],)
+                        )
+                        conn.commit()
                         st.success("✅ تمت الموافقة على طلب الإجازة!")
                         st.rerun()
                 
                 with col3:
-                    if st.button("❌ رفض", key=f"reject_{i}", use_container_width=True):
-                        # البحث عن الطلب في القائمة الرئيسية وتحديثه
-                        for j, v in enumerate(st.session_state.vacations):
-                            if (v['employee'] == vacation['employee'] and 
-                                v['start_date'] == vacation['start_date']):
-                                st.session_state.vacations[j]['status'] = 'مرفوضة'
-                                break
+                    if st.button("❌ رفض", key=f"reject_{vacation['id']}", use_container_width=True):
+                        conn.execute(
+                            "UPDATE vacations SET status = 'مرفوضة' WHERE id = ?",
+                            (vacation['id'],)
+                        )
+                        conn.commit()
                         st.error("❌ تم رفض طلب الإجازة!")
                         st.rerun()
         
         st.markdown("---")
+    
+    conn.close()
 
 elif menu == "التقارير":
     st.header("📊 التقارير")
     
+    conn = sqlite3.connect('vacation_system.db')
+    
     tab1, tab2 = st.tabs(["تقارير الموظفين", "تقارير الإجازات"])
     
     with tab1:
-        if st.session_state.employees:
+        employees_df = pd.read_sql("SELECT * FROM employees ORDER BY name", conn)
+        
+        if not employees_df.empty:
             st.subheader("تقرير الموظفين")
-            employees_df = pd.DataFrame(st.session_state.employees)
-            st.dataframe(employees_df)
+            st.dataframe(employees_df[['employee_id', 'name', 'department', 'position']])
             
             # إحصائيات
             dept_counts = employees_df['department'].value_counts()
@@ -188,9 +251,10 @@ elif menu == "التقارير":
             st.info("لا توجد بيانات للموظفين")
     
     with tab2:
-        if st.session_state.vacations:
+        vacations_df = pd.read_sql("SELECT * FROM vacations ORDER BY created_date DESC", conn)
+        
+        if not vacations_df.empty:
             st.subheader("تقرير طلبات الإجازة")
-            vacations_df = pd.DataFrame(st.session_state.vacations)
             
             # إضافة تلوين للحالات
             def color_status(status):
@@ -202,7 +266,7 @@ elif menu == "التقارير":
                     return '🟡 معلقة'
             
             vacations_df['الحالة'] = vacations_df['status'].apply(color_status)
-            st.dataframe(vacations_df[['employee', 'type', 'start_date', 'end_date', 'الحالة']])
+            st.dataframe(vacations_df[['employee_name', 'vacation_type', 'start_date', 'end_date', 'الحالة']])
             
             # إحصائيات الحالات
             status_counts = vacations_df['status'].value_counts()
@@ -210,6 +274,8 @@ elif menu == "التقارير":
             st.write(status_counts)
         else:
             st.info("لا توجد طلبات إجازة")
+    
+    conn.close()
 
 # تذييل الصفحة
 st.markdown("---")
