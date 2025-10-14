@@ -1628,9 +1628,11 @@ def main():
     else:
         main_interface()
 
+
  python
 if __name__ == "__main__":
     # جرب الدخول ببيانات افتراضية أولاً
     initialize_sample_data()
     main()
+
 
